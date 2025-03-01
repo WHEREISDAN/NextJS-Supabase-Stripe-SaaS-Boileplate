@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/utils/supabase';
+import { getStoredCodeVerifier, clearCodeVerifier } from '@/utils/pkce';
+import { handleError, logError } from '@/utils/error-handler';
 
 export default function AuthCallback() {
   const router = useRouter();
@@ -10,7 +12,9 @@ export default function AuthCallback() {
   useEffect(() => {
     const handleRedirect = async () => {
       try {
-        // Get the hash if it exists
+        // Get URL parameters including hash if present
+        const url = new URL(window.location.href);
+        const params = Object.fromEntries(url.searchParams.entries());
         const hashParams = window.location.hash
           ? Object.fromEntries(
               new URLSearchParams(
@@ -19,12 +23,26 @@ export default function AuthCallback() {
             )
           : null;
 
-        if (hashParams?.access_token) {
-          // Set the session with the hash parameters
+        // Get the code verifier stored during the sign-in process
+        const codeVerifier = getStoredCodeVerifier();
+        
+        // For PKCE OAuth flow, we need both the code from URL and the code verifier
+        if (params.code && codeVerifier) {
+          const { data, error } = await supabase.auth.exchangeCodeForSession(params.code, {
+            codeVerifier,
+          });
+          
+          if (error) throw error;
+          
+          // Clean up the stored code verifier
+          clearCodeVerifier();
+        } else if (hashParams?.access_token) {
+          // Legacy flow or magic link - set the session with the hash parameters
           const { error } = await supabase.auth.setSession({
             access_token: hashParams.access_token,
             refresh_token: hashParams.refresh_token,
           });
+          
           if (error) throw error;
         }
 
@@ -36,7 +54,7 @@ export default function AuthCallback() {
           // Check if profile exists
           const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select()
+            .select('id')
             .eq('id', user.id)
             .single();
 
@@ -52,6 +70,8 @@ export default function AuthCallback() {
                 {
                   id: user.id,
                   email: user.email,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
                 },
               ]);
 
@@ -62,8 +82,9 @@ export default function AuthCallback() {
         // Redirect to dashboard after successful authentication and profile creation
         router.push('/dashboard');
       } catch (error) {
-        console.error('Error during auth redirect:', error);
-        router.push('/login?error=Authentication%20failed');
+        const appError = handleError(error);
+        logError(appError);
+        router.push(`/login?error=${encodeURIComponent(appError.message)}`);
       }
     };
 
@@ -72,7 +93,10 @@ export default function AuthCallback() {
 
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="loading loading-spinner loading-lg"></div>
+      <div className="text-center">
+        <div className="loading loading-spinner loading-lg mb-4"></div>
+        <p className="text-base-content/70">Completing authentication...</p>
+      </div>
     </div>
   );
 }

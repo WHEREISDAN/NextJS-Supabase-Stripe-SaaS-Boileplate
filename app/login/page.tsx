@@ -5,6 +5,8 @@ import { supabase } from '@/utils/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
+import { handleError } from '@/utils/error-handler';
+import { generateCodeVerifier, generateCodeChallenge, storeCodeVerifier } from '@/utils/pkce';
 
 // Define validation schema
 const loginSchema = z.object({
@@ -60,20 +62,53 @@ export default function Login() {
       router.push('/dashboard');
       router.refresh();
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        // Handle validation errors
-        const errors = error.errors.reduce((acc: { [key: string]: string[] }, curr) => {
-          const key = curr.path[0] as string;
-          if (!acc[key]) acc[key] = [];
-          acc[key].push(curr.message);
-          return acc;
-        }, {});
-        setValidationErrors(errors);
-      } else if (error instanceof Error) {
-        setError(error.message);
+      const appError = handleError(error);
+      
+      if (appError.type === 'VALIDATION') {
+        setValidationErrors(appError.details || {});
       } else {
-        setError('An unexpected error occurred');
+        setError(appError.message);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOAuthSignIn = async (provider: 'google') => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Generate and store PKCE code verifier
+      const codeVerifier = generateCodeVerifier();
+      storeCodeVerifier(codeVerifier);
+      
+      // Generate code challenge from verifier
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      
+      // Validate environment variable
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+      if (!appUrl) {
+        throw new Error('Missing NEXT_PUBLIC_APP_URL environment variable');
+      }
+      
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${appUrl}/auth/callback`,
+          queryParams: {
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+      
+      if (error) throw error;
+    } catch (error) {
+      const appError = handleError(error);
+      setError(appError.message);
     } finally {
       setLoading(false);
     }
@@ -145,25 +180,9 @@ export default function Login() {
         <div className="divider text-base-content/70">OR</div>
 
         <button
-          onClick={async () => {
-            try {
-              const { error } = await supabase.auth.signInWithOAuth({
-                provider: 'google',
-                options: {
-                  redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-                  queryParams: {
-                    access_type: 'offline',
-                    prompt: 'consent',
-                  },
-                },
-              });
-              if (error) throw error;
-            } catch (error) {
-              console.error('Error:', error);
-              setError(error instanceof Error ? error.message : 'Failed to sign in with Google');
-            }
-          }}
+          onClick={() => handleOAuthSignIn('google')}
           className="btn btn-outline w-full"
+          disabled={loading}
         >
           <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
             <path
