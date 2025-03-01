@@ -63,19 +63,4 @@ export function generateCodeVerifier(): string {
 export async function generateCodeChallenge(verifier: string): Promise<string> {
   const hashedVerifier = await sha256(verifier);
   return arrayBufferToBase64Url(hashedVerifier);
-}
-
-// Store the code verifier in session storage
-export function storeCodeVerifier(verifier: string): void {
-  sessionStorage.setItem('pkce_code_verifier', verifier);
-}
-
-// Retrieve the code verifier from session storage
-export function getStoredCodeVerifier(): string | null {
-  return sessionStorage.getItem('pkce_code_verifier');
-}
-
-// Clear the code verifier from session storage
-export function clearCodeVerifier(): void {
-  sessionStorage.removeItem('pkce_code_verifier');
 } 

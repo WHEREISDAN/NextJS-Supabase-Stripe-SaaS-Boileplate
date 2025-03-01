@@ -1,102 +1,49 @@
 'use client';
 
+import { handleOAuthCallback } from '@/app/actions/auth';
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '@/utils/supabase';
-import { getStoredCodeVerifier, clearCodeVerifier } from '@/utils/pkce';
-import { handleError, logError } from '@/utils/error-handler';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function AuthCallback() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    const handleRedirect = async () => {
-      try {
-        // Get URL parameters including hash if present
-        const url = new URL(window.location.href);
-        const params = Object.fromEntries(url.searchParams.entries());
-        const hashParams = window.location.hash
-          ? Object.fromEntries(
-              new URLSearchParams(
-                window.location.hash.substring(1) // Remove the # character
-              ).entries()
-            )
-          : null;
+    async function handleCallback() {
+      const code = searchParams.get('code');
+      const error = searchParams.get('error');
+      const error_description = searchParams.get('error_description');
 
-        // Get the code verifier stored during the sign-in process
-        const codeVerifier = getStoredCodeVerifier();
-        
-        // For PKCE OAuth flow, we need both the code from URL and the code verifier
-        if (params.code && codeVerifier) {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(params.code, {
-            codeVerifier,
-          });
-          
-          if (error) throw error;
-          
-          // Clean up the stored code verifier
-          clearCodeVerifier();
-        } else if (hashParams?.access_token) {
-          // Legacy flow or magic link - set the session with the hash parameters
-          const { error } = await supabase.auth.setSession({
-            access_token: hashParams.access_token,
-            refresh_token: hashParams.refresh_token,
-          });
-          
-          if (error) throw error;
-        }
-
-        // Get the user after setting the session
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
-
-        if (user) {
-          // Check if profile exists
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', user.id)
-            .single();
-
-          if (profileError && profileError.code !== 'PGRST116') {
-            throw profileError;
-          }
-
-          // If profile doesn't exist, create it
-          if (!profile) {
-            const { error: insertError } = await supabase
-              .from('profiles')
-              .insert([
-                {
-                  id: user.id,
-                  email: user.email,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                },
-              ]);
-
-            if (insertError) throw insertError;
-          }
-        }
-
-        // Redirect to dashboard after successful authentication and profile creation
-        router.push('/dashboard');
-      } catch (error) {
-        const appError = handleError(error);
-        logError(appError);
-        router.push(`/login?error=${encodeURIComponent(appError.message)}`);
+      // Handle OAuth errors
+      if (error) {
+        console.error('OAuth error:', error, error_description);
+        router.push(`/login?error=${encodeURIComponent(error_description?.toString() || 'Authentication failed')}`);
+        return;
       }
-    };
 
-    handleRedirect();
-  }, [router]);
+      // Validate authorization code
+      if (!code) {
+        console.error('No code provided in OAuth callback');
+        router.push('/login?error=Missing authorization code');
+        return;
+      }
+
+      // Handle the callback with our server action
+      const result = await handleOAuthCallback(code);
+      
+      if (result.error) {
+        router.push(`/login?error=${encodeURIComponent(result.error)}`);
+      } else if (result.url) {
+        router.push(result.url);
+      }
+    }
+
+    handleCallback();
+  }, [searchParams, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="text-center">
-        <div className="loading loading-spinner loading-lg mb-4"></div>
-        <p className="text-base-content/70">Completing authentication...</p>
-      </div>
+      <div className="loading loading-spinner loading-lg"></div>
     </div>
   );
 }

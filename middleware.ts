@@ -14,6 +14,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL('/error?message=Server%20configuration%20error', req.url));
   }
 
+  // Create a response with the Supabase client
   const supabase = createServerClient(
     supabaseUrl,
     supabaseAnonKey,
@@ -39,9 +40,8 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  // Refresh session if needed
+  const { data: { session }, error } = await supabase.auth.getSession();
 
   // Protected routes that require authentication
   const protectedRoutes = ['/dashboard'];
@@ -61,7 +61,9 @@ export async function middleware(req: NextRequest) {
 
   // Handle authentication checks
   if (!session && isProtectedRoute) {
-    return NextResponse.redirect(new URL('/login', req.url));
+    const redirectUrl = new URL('/login', req.url);
+    redirectUrl.searchParams.set('redirect', req.nextUrl.pathname);
+    return NextResponse.redirect(redirectUrl);
   }
 
   if (session && isAuthRoute) {

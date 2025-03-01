@@ -6,6 +6,7 @@ import { createBrowserSupabaseClient } from '@/utils/supabase';
 import { User, Session } from '@supabase/supabase-js';
 import { Profile } from '@/types/supabase';
 import { handleError, logError } from '@/utils/error-handler';
+import { signOut as serverSignOut } from '@/app/actions/auth';
 
 interface AuthState {
   user: User | null;
@@ -111,12 +112,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       setState(prev => ({ ...prev, isLoading: true }));
-      await supabase.auth.signOut();
+      
+      // Call the server action to sign out
+      const result = await serverSignOut();
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      // Clear client-side state
       setState({
         ...initialState,
         isLoading: false,
       });
-      router.push('/login');
+
+      // Redirect to login page
+      if (result.url) {
+        router.push(result.url);
+      }
     } catch (error) {
       const appError = handleError(error);
       logError(appError);

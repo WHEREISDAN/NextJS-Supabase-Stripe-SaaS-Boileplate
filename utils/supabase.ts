@@ -18,7 +18,29 @@ export const createBrowserSupabaseClient = () => {
     throw new Error('Missing Supabase environment variables');
   }
 
-  browserInstance = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey);
+  browserInstance = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      flowType: 'pkce',
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+      storage: {
+        getItem: (key) => {
+          const cookie = document.cookie
+            .split('; ')
+            .find((row) => row.startsWith(`${key}=`));
+          return cookie ? decodeURIComponent(cookie.split('=')[1]) : null;
+        },
+        setItem: (key, value) => {
+          // Let the server handle setting cookies
+        },
+        removeItem: (key) => {
+          // Let the server handle removing cookies
+        },
+      },
+    },
+  });
+  
   return browserInstance;
 };
 

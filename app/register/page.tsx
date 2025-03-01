@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/utils/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
+import { handleError } from '@/utils/error-handler';
+import { signInWithGoogle } from '@/app/actions/auth';
 
 // Define validation schema
 const registerSchema = z.object({
@@ -37,6 +39,15 @@ export default function Register() {
   }>({});
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  // Get error from URL if present
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const errorMessage = searchParams.get('error');
+    if (errorMessage) {
+      setError(decodeURIComponent(errorMessage));
+    }
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -80,6 +91,8 @@ export default function Register() {
           {
             id: authData.user.id,
             email: validatedData.email,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           },
         ]);
 
@@ -117,6 +130,20 @@ export default function Register() {
         setError('An unexpected error occurred. Please try again.');
       }
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOAuthSignIn = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Call the server action
+      await signInWithGoogle();
+    } catch (error) {
+      const appError = handleError(error);
+      setError(appError.message);
       setLoading(false);
     }
   };
@@ -199,13 +226,13 @@ export default function Register() {
           <div className="mt-2">
             <p className="text-sm text-base-content/70">
               Password must contain:
-              <ul className="list-disc list-inside mt-1">
-                <li>At least 6 characters</li>
-                <li>One uppercase letter</li>
-                <li>One lowercase letter</li>
-                <li>One number</li>
-              </ul>
             </p>
+            <ul className="list-disc list-inside mt-1 text-sm text-base-content/70">
+              <li>At least 6 characters</li>
+              <li>One uppercase letter</li>
+              <li>One lowercase letter</li>
+              <li>One number</li>
+            </ul>
           </div>
 
           <button
@@ -220,25 +247,9 @@ export default function Register() {
         <div className="divider text-base-content/70">OR</div>
 
         <button
-          onClick={async () => {
-            try {
-              const { error } = await supabase.auth.signInWithOAuth({
-                provider: 'google',
-                options: {
-                  redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-                  queryParams: {
-                    access_type: 'offline',
-                    prompt: 'consent',
-                  },
-                },
-              });
-              if (error) throw error;
-            } catch (error) {
-              console.error('Error:', error);
-              setError(error instanceof Error ? error.message : 'Failed to sign in with Google');
-            }
-          }}
+          onClick={handleOAuthSignIn}
           className="btn btn-outline w-full"
+          disabled={loading}
         >
           <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
             <path
