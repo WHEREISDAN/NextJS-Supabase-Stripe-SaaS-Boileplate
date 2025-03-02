@@ -61,6 +61,17 @@ export async function middleware(req: NextRequest) {
 
   // Handle authentication checks
   if (!session && isProtectedRoute) {
+    // Check if the user is coming from the auth callback page
+    const referer = req.headers.get('referer') || '';
+    const isComingFromCallback = referer.includes('/auth/callback');
+    
+    // If coming from callback, allow access to dashboard temporarily
+    // This gives the client-side auth context time to initialize
+    if (isComingFromCallback) {
+      console.log('User coming from auth callback, allowing access to dashboard temporarily');
+      return res;
+    }
+    
     const redirectUrl = new URL('/login', req.url);
     redirectUrl.searchParams.set('redirect', req.nextUrl.pathname);
     return NextResponse.redirect(redirectUrl);

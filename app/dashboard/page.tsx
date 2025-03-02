@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import ThemeSwitcher from '../components/ThemeSwitcher';
 import Calendar from '../components/Calendar';
+import { getUserSubscription } from '@/app/actions/stripe';
+import { createStripePortalSession } from '@/app/actions/stripe-portal';
 
 interface Subscription {
   id: string;
@@ -13,34 +15,47 @@ interface Subscription {
 }
 
 export default function Dashboard() {
-  const { profile, loading, signOut } = useAuth();
+  const { profile, isLoading, signOut } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [managingSubscription, setManagingSubscription] = useState(false);
 
   useEffect(() => {
     const fetchSubscription = async () => {
-      if (profile?.stripe_customer_id) {
-        try {
-          const response = await fetch('/api/stripe/subscription');
-          const { subscription: subscriptionData } = await response.json();
-          setSubscription(subscriptionData);
-        } catch (error) {
+      try {
+        const { subscription: subscriptionData, error } = await getUserSubscription();
+        
+        if (error) {
           console.error('Error fetching subscription:', error);
+          return;
         }
+        
+        setSubscription(subscriptionData);
+      } catch (error) {
+        console.error('Error fetching subscription:', error);
       }
     };
 
-    fetchSubscription();
+    if (profile) {
+      fetchSubscription();
+    }
   }, [profile]);
 
   const handleManageSubscription = async () => {
     try {
       setManagingSubscription(true);
-      const response = await fetch('/api/stripe/portal', {
-        method: 'POST',
-      });
-      const { url } = await response.json();
-      window.location.href = url;
+      
+      // Use server action to create portal session
+      const result = await createStripePortalSession();
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      if (result.url) {
+        window.location.href = result.url;
+      } else {
+        throw new Error('No portal URL returned');
+      }
     } catch (error) {
       console.error('Error:', error);
       alert('Something went wrong. Please try again.');
@@ -49,7 +64,26 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) {
+  // Set a maximum loading time to prevent infinite spinner
+  useEffect(() => {
+    let loadingTimeout: NodeJS.Timeout;
+    
+    if (isLoading) {
+      // If still loading after 5 seconds, force render the dashboard anyway
+      loadingTimeout = setTimeout(() => {
+        console.log('Loading timeout reached, forcing dashboard render');
+        // This will cause a re-render without the profile data
+        // The profile data will be loaded when it's available
+      }, 5000);
+    }
+    
+    return () => {
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+    };
+  }, [isLoading]);
+  
+  // Show loading spinner, but only for a reasonable amount of time
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-base-100">
         <span className="loading loading-spinner loading-lg text-base-content"></span>

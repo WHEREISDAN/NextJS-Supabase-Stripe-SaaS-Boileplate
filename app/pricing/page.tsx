@@ -2,10 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/utils/supabase';
-import { getStripe } from '@/utils/stripe-client';
 import Navigation from '@/app/components/Navigation';
 import AnnouncementBanner from '@/app/components/AnnouncementBanner';
+import { createStripeCheckout } from '@/app/actions/stripe';
 
 const PRICING_PLANS = [
   {
@@ -69,40 +68,28 @@ export default function Pricing() {
 
       setLoading(priceId);
 
-      const { data: { session } } = await supabase.auth.getSession();
+      // Create checkout session using server action
+      const result = await createStripeCheckout(priceId, 'subscription');
       
-      if (!session) {
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      if (!result.sessionId) {
+        throw new Error('No session ID returned from checkout');
+      }
+      
+      // Redirect to Stripe Checkout
+      window.location.href = `https://checkout.stripe.com/pay/${result.sessionId}`;
+    } catch (error) {
+      console.error('Error:', error);
+      
+      // If not logged in, redirect to login
+      if (error instanceof Error && error.message.includes('logged in')) {
         router.push('/login');
         return;
       }
-
-      // Create checkout session
-      const response = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          priceId,
-          mode: 'subscription',
-        }),
-      });
-
-      const data = await response.json();
-      if (data.error) throw new Error(data.error);
-      if (!data.sessionId) throw new Error('No session ID returned from checkout');
       
-      const { sessionId } = data;
-      
-      // Redirect to checkout using Stripe client
-      const stripe = await getStripe();
-      if (!stripe) throw new Error('Failed to load Stripe');
-      
-      const { error: checkoutError } = await stripe.redirectToCheckout({ sessionId });
-      if (checkoutError) throw checkoutError;
-    } catch (error) {
-      console.error('Error:', error);
       alert('Something went wrong. Please try again.');
     } finally {
       setLoading(null);

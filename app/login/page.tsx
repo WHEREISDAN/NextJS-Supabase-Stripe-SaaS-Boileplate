@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/utils/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
 import { handleError } from '@/utils/error-handler';
 import { signInWithGoogle } from '@/app/actions/auth';
+import { signInWithPassword } from '@/app/actions/auth-client';
 
 // Define validation schema
 const loginSchema = z.object({
@@ -58,26 +58,27 @@ export default function Login() {
     setValidationErrors({});
 
     try {
-      // Validate form data
-      const validatedData = loginSchema.parse(formData);
-
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: validatedData.email,
-        password: validatedData.password,
+      // Call the server action to sign in
+      const result = await signInWithPassword({
+        email: formData.email,
+        password: formData.password,
       });
 
-      if (authError) throw authError;
+      if (result.error) {
+        if (result.fieldErrors) {
+          setValidationErrors(result.fieldErrors);
+        } else {
+          setError(result.error);
+        }
+        return;
+      }
 
+      // Redirect to dashboard on success
       router.push('/dashboard');
       router.refresh();
     } catch (error) {
       const appError = handleError(error);
-      
-      if (appError.type === 'VALIDATION') {
-        setValidationErrors(appError.details || {});
-      } else {
-        setError(appError.message);
-      }
+      setError(appError.message);
     } finally {
       setLoading(false);
     }

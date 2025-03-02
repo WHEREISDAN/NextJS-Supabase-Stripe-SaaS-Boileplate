@@ -1,20 +1,21 @@
-import { NextResponse } from 'next/server';
+'use server';
+
 import { createCustomerPortalSession } from '@/utils/stripe';
 import { createServerSupabaseClient, getServerUser } from '@/utils/supabase-server';
 
-export async function POST() {
+/**
+ * Server action to create a Stripe customer portal session
+ */
+export async function createStripePortalSession() {
   try {
-    // Get authenticated user from server client
+    // Get authenticated user
     const user = await getServerUser();
 
     if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return { error: 'Unauthorized' };
     }
 
-    // Get user's Stripe customer ID using server client
+    // Get user's Stripe customer ID
     const supabase = await createServerSupabaseClient();
     const { data: profile } = await supabase
       .from('profiles')
@@ -23,24 +24,18 @@ export async function POST() {
       .single();
 
     if (!profile?.stripe_customer_id) {
-      return NextResponse.json(
-        { error: 'No associated Stripe customer found' },
-        { status: 400 }
-      );
+      return { error: 'No associated Stripe customer found' };
     }
 
     // Create customer portal session
     const { url } = await createCustomerPortalSession(
       profile.stripe_customer_id,
-      new URL('/dashboard', process.env.NEXT_PUBLIC_APP_URL).toString()
+      new URL('/dashboard', process.env.NEXT_PUBLIC_APP_URL!).toString()
     );
 
-    return NextResponse.json({ url });
+    return { url };
   } catch (error) {
     console.error('Error creating customer portal session:', error);
-    return NextResponse.json(
-      { error: 'Error creating customer portal session' },
-      { status: 500 }
-    );
+    return { error: 'Error creating customer portal session' };
   }
 }

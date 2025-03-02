@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/utils/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
 import { handleError } from '@/utils/error-handler';
 import { signInWithGoogle } from '@/app/actions/auth';
+import { registerWithPassword } from '@/app/actions/auth-client';
 
 // Define validation schema
 const registerSchema = z.object({
@@ -70,65 +70,36 @@ export default function Register() {
     setValidationErrors({});
 
     try {
-      // Validate form data
-      const validatedData = registerSchema.parse(formData);
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: validatedData.email,
-        password: validatedData.password,
-      });
-
-      if (authError) throw authError;
-
-      if (!authData.user) {
-        throw new Error('Registration failed. Please try again.');
+      // Check if passwords match
+      if (formData.password !== formData.confirmPassword) {
+        setValidationErrors({
+          confirmPassword: ["Passwords don't match"]
+        });
+        setLoading(false);
+        return;
       }
 
-      // Create the profile
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([
-          {
-            id: authData.user.id,
-            email: validatedData.email,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
-
-      if (profileError) {
-        console.error('Profile creation error:', profileError);
-        // If profile creation fails, clean up the auth user
-        await supabase.auth.signOut();
-        throw new Error('Failed to create user profile. Please try again.');
-      }
-
-      // Sign in the user immediately after registration
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: validatedData.email,
-        password: validatedData.password,
+      // Call the server action to register
+      const result = await registerWithPassword({
+        email: formData.email,
+        password: formData.password,
       });
 
-      if (signInError) throw signInError;
+      if (result.error) {
+        if (result.fieldErrors) {
+          setValidationErrors(result.fieldErrors);
+        } else {
+          setError(result.error);
+        }
+        return;
+      }
 
+      // Redirect to dashboard on success
       router.push('/dashboard');
       router.refresh();
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        // Handle validation errors
-        const errors = error.errors.reduce((acc: { [key: string]: string[] }, curr) => {
-          const key = curr.path[0] as string;
-          if (!acc[key]) acc[key] = [];
-          acc[key].push(curr.message);
-          return acc;
-        }, {});
-        setValidationErrors(errors);
-      } else if (error instanceof Error) {
-        setError(error.message);
-      } else {
-        console.error('Registration error:', error);
-        setError('An unexpected error occurred. Please try again.');
-      }
+      const appError = handleError(error);
+      setError(appError.message);
     } finally {
       setLoading(false);
     }

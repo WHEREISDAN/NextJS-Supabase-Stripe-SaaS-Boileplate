@@ -2,11 +2,12 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { createBrowserSupabaseClient } from '@/utils/supabase';
 import { User, Session } from '@supabase/supabase-js';
 import { Profile } from '@/types/supabase';
 import { handleError, logError } from '@/utils/error-handler';
 import { signOut as serverSignOut } from '@/app/actions/auth';
+import { getCurrentProfile } from '@/app/actions/auth-client';
+import { createBrowserClient } from '@supabase/ssr';
 
 interface AuthState {
   user: User | null;
@@ -36,26 +37,50 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const supabase = createBrowserSupabaseClient();
   const [state, setState] = useState<AuthState>(initialState);
   const router = useRouter();
+  
+  // Add a timeout to prevent infinite loading
+  useEffect(() => {
+    // If still loading after 8 seconds, force set isLoading to false
+    const timeout = setTimeout(() => {
+      if (state.isLoading) {
+        console.log('Auth loading timeout reached, forcing state update');
+        setState(prev => ({ ...prev, isLoading: false }));
+      }
+    }, 8000);
+    
+    return () => clearTimeout(timeout);
+  }, [state.isLoading]);
+  
+  // Initialize Supabase client for auth state changes only
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        flowType: 'pkce',
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    }
+  );
 
-  // Fetch user profile
-  const fetchProfile = async (userId: string) => {
+  // Fetch user profile using server action
+  const fetchProfile = async () => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) throw error;
+      const { profile } = await getCurrentProfile();
       
-      setState(prev => ({ 
-        ...prev, 
-        profile: data as Profile,
-        isLoading: false
-      }));
+      if (profile) {
+        setState(prev => ({ 
+          ...prev, 
+          profile,
+          isLoading: false
+        }));
+      } else {
+        setState(prev => ({ ...prev, isLoading: false }));
+      }
     } catch (error) {
       const appError = handleError(error);
       logError(appError);
@@ -63,49 +88,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Ensure a profile exists for the user
-  const ensureProfile = async (user: User) => {
-    try {
-      // Check if profile exists
-      const { data: existingProfile, error: fetchError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', user.id)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        throw fetchError;
-      }
-
-      // If profile doesn't exist, create it
-      if (!existingProfile) {
-        const { error: insertError } = await supabase
-          .from('profiles')
-          .insert([
-            {
-              id: user.id,
-              email: user.email,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-          ]);
-
-        if (insertError) throw insertError;
-      }
-
-      // Fetch the complete profile after ensuring it exists
-      await fetchProfile(user.id);
-    } catch (error) {
-      const appError = handleError(error);
-      logError(appError);
-    }
-  };
-
   // Refresh profile data
   const refreshProfile = async () => {
-    if (state.user) {
-      await fetchProfile(state.user.id);
-    }
+    await fetchProfile();
   };
 
   // Handle sign out
@@ -139,20 +124,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Initialize auth state and set up listeners
   useEffect(() => {
+    let retryCount = 0;
+    const maxRetries = 3;
+    
     const initializeAuth = async () => {
       try {
         // Get initial session
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session) {
+          // First update session and user, but keep isAuthenticated false until we have the profile
           setState(prev => ({
             ...prev,
             session,
             user: session.user,
-            isAuthenticated: true,
+            isLoading: true, // Keep loading while we fetch profile
           }));
           
-          await ensureProfile(session.user);
+          // Fetch profile using server action
+          try {
+            const { profile } = await getCurrentProfile();
+            if (profile) {
+              // Only set isAuthenticated once we have the profile
+              setState(prev => ({
+                ...prev,
+                profile,
+                isAuthenticated: true,
+                isLoading: false,
+              }));
+            } else {
+              console.error('No profile found during initialization');
+              setState(prev => ({ ...prev, isLoading: false }));
+            }
+          } catch (profileError) {
+            console.error('Error fetching profile:', profileError);
+            setState(prev => ({ ...prev, isLoading: false }));
+          }
         } else {
           setState(prev => ({ ...prev, isLoading: false }));
         }
@@ -161,16 +168,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const {
           data: { subscription },
         } = supabase.auth.onAuthStateChange(async (event, session) => {
+          console.log('Auth state change:', event);
+          
           if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
             if (session) {
+              // First update session and user, but keep isAuthenticated false until we have the profile
               setState(prev => ({
                 ...prev,
                 session,
                 user: session.user,
-                isAuthenticated: true,
+                isLoading: true, // Keep loading while we fetch profile
               }));
               
-              await ensureProfile(session.user);
+              // Fetch profile using server action
+              try {
+                const { profile } = await getCurrentProfile();
+                if (profile) {
+                  // Only set isAuthenticated once we have the profile
+                  setState(prev => ({
+                    ...prev,
+                    profile,
+                    isAuthenticated: true,
+                    isLoading: false,
+                  }));
+                } else {
+                  console.error('No profile found after sign in');
+                  setState(prev => ({ ...prev, isLoading: false }));
+                }
+              } catch (profileError) {
+                console.error('Error fetching profile on auth change:', profileError);
+                setState(prev => ({ ...prev, isLoading: false }));
+              }
             }
           } else if (event === 'SIGNED_OUT') {
             setState({
@@ -187,12 +215,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         const appError = handleError(error);
         logError(appError);
-        setState(prev => ({ ...prev, isLoading: false }));
+        
+        // If we've reached max retries, give up
+        if (retryCount >= maxRetries) {
+          setState(prev => ({ ...prev, isLoading: false }));
+        } else {
+          // Otherwise, retry after a delay
+          retryCount++;
+          console.log(`Auth initialization error, retrying (${retryCount}/${maxRetries})...`);
+          
+          setTimeout(() => {
+            initializeAuth();
+          }, 1000); // Retry after 1 second
+        }
       }
     };
 
     initializeAuth();
-  }, []);
+  }, [router]);
 
   return (
     <AuthContext.Provider 
