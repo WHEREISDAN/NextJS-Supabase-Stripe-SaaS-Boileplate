@@ -97,10 +97,15 @@ export const verifyStripeWebhookSignature = (
   try {
     if (!header) throw new Error('No signature header');
     
+    // Use the CLI webhook secret when running locally with stripe listen
+    const webhookSecret = process.env.NODE_ENV === 'development' 
+      ? process.env.STRIPE_CLI_WEBHOOK_SECRET!
+      : process.env.STRIPE_WEBHOOK_SECRET!;
+    
     return stripe.webhooks.constructEvent(
       payload,
       header,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      webhookSecret
     );
   } catch (error) {
     console.error('Error verifying webhook signature:', error);

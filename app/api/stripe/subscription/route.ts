@@ -1,23 +1,21 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/utils/supabase';
-import { getUserSubscriptionStatus } from '@/utils/stripe-helpers';
+import { getServerUser } from '@/utils/supabase-server';
+import { getUserSubscriptionStatusServer } from '@/utils/stripe-helpers-server';
 
 export async function GET() {
   try {
-    // Get user session
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    // Get authenticated user from server client
+    const user = await getServerUser();
 
-    if (!session?.user) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    // Get subscription status
-    const subscription = await getUserSubscriptionStatus(session.user.id);
+    // Get subscription status using server-side helper
+    const subscription = await getUserSubscriptionStatusServer(user.id);
 
     return NextResponse.json({ subscription });
   } catch (error) {

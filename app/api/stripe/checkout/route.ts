@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createCheckoutSession } from '@/utils/stripe';
-import { supabase } from '@/utils/supabase';
-import { getOrCreateStripeCustomer } from '@/utils/stripe-helpers';
+import { createServerSupabaseClient } from '@/utils/supabase-server';
+import { getOrCreateStripeCustomerServer } from '@/utils/stripe-helpers-server';
 
 export async function POST(req: Request) {
   try {
@@ -16,8 +16,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Extract and verify the session
+    // Extract token and create server client
     const token = authHeader.split(' ')[1];
+    const supabase = await createServerSupabaseClient();
+    
+    // Verify the token
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
     if (authError || !user) {
@@ -27,8 +30,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get or create Stripe customer
-    const customerId = await getOrCreateStripeCustomer(
+    // Get or create Stripe customer using server-side helper
+    const customerId = await getOrCreateStripeCustomerServer(
       user.id,
       user.email!
     );

@@ -24,6 +24,7 @@ export const createBrowserSupabaseClient = () => {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      debug: false, // Turn off debug messages
       storage: {
         getItem: (key) => {
           const cookie = document.cookie

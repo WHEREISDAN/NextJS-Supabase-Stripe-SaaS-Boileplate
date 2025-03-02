@@ -1,26 +1,25 @@
 import { NextResponse } from 'next/server';
 import { createCustomerPortalSession } from '@/utils/stripe';
-import { supabase } from '@/utils/supabase';
+import { createServerSupabaseClient, getServerUser } from '@/utils/supabase-server';
 
 export async function POST() {
   try {
-    // Get user session
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    // Get authenticated user from server client
+    const user = await getServerUser();
 
-    if (!session?.user) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    // Get user's Stripe customer ID
+    // Get user's Stripe customer ID using server client
+    const supabase = await createServerSupabaseClient();
     const { data: profile } = await supabase
       .from('profiles')
       .select('stripe_customer_id')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single();
 
     if (!profile?.stripe_customer_id) {

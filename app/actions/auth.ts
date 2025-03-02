@@ -30,8 +30,6 @@ export async function signInWithGoogle(): Promise<{ error?: string; url?: string
         queryParams: {
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',
-          access_type: 'offline',
-          prompt: 'consent',
         },
         skipBrowserRedirect: true, // Let us handle the redirect
       },
@@ -40,13 +38,14 @@ export async function signInWithGoogle(): Promise<{ error?: string; url?: string
     if (error) throw error;
     if (!data.url) throw new Error('No OAuth URL returned');
 
-    // Store the code verifier in the session
+    // Store the code verifier in a cookie with appropriate settings
     const cookieStore = await cookies();
     cookieStore.set('code_verifier', codeVerifier, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
+      maxAge: 60 * 5, // 5 minutes
     });
 
     // Return the URL to redirect to
@@ -66,19 +65,25 @@ export async function handleOAuthCallback(code: string): Promise<{ error?: strin
     const supabase = await createServerSupabaseClient();
     const cookieStore = await cookies();
     
-    // Get the code verifier from the session
+    // Get the code verifier from the cookie
     const codeVerifier = cookieStore.get('code_verifier')?.value;
     if (!codeVerifier) {
-      return { error: 'No code verifier found', url: '/login' };
+      console.error('No code verifier found in cookies');
+      return { error: 'Authentication failed - session expired', url: '/login' };
     }
 
     // Exchange the authorization code for a session
     const { data: { session, user }, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) throw error;
-    if (!session || !user) throw new Error('No session or user returned');
 
-    // Clean up the code verifier
-    cookieStore.delete('code_verifier');
+    if (error) {
+      console.error('Session exchange error:', error);
+      return { error: 'Authentication failed', url: '/login' };
+    }
+
+    if (!session || !user) {
+      console.error('No session or user returned');
+      return { error: 'Authentication failed - no session', url: '/login' };
+    }
 
     // Check if profile exists
     const { data: profile, error: profileError } = await supabase
@@ -88,7 +93,8 @@ export async function handleOAuthCallback(code: string): Promise<{ error?: strin
       .single();
 
     if (profileError && profileError.code !== 'PGRST116') {
-      throw profileError;
+      console.error('Profile check error:', profileError);
+      return { error: 'Authentication failed - profile error', url: '/login' };
     }
 
     // If profile doesn't exist, create it
@@ -104,10 +110,15 @@ export async function handleOAuthCallback(code: string): Promise<{ error?: strin
           },
         ]);
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Profile creation error:', insertError);
+        return { error: 'Authentication failed - profile creation error', url: '/login' };
+      }
     }
 
-    // Return the URL to redirect to
+    // Clean up the code verifier cookie
+    cookieStore.delete('code_verifier');
+
     return { url: '/dashboard' };
   } catch (error) {
     console.error('OAuth callback error:', error);
